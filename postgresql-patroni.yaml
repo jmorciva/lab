@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: patroni-config
+data:
+  patroni.yml: |
+    scope: postgres-cluster
+    namespace: /db/
+    name: postgres
+    log:
+      level: INFO
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: 100
+        shared_buffers: "128MB"
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+    bootstrap:
+      dcs:
+        ttl: 30
+        loop_wait: 10
+        retry_timeout: 10
+        maximum_lag_on_failover: 33554432
+        postgresql:
+          parameters:
+            wal_keep_size: 64
+      initdb:
+      - encoding: UTF8
+      - data-checksums
+    restapi:
+      listen: "0.0.0.0:8008"
+      connect_address: "127.0.0.1:8008"
+    tags:
+      nofailover: false
+      noloadbalance: false
+      clonefrom: false
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  serviceName: "postgres"
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14.12
+        env:
+        - name: PATRONI_SCOPE
+          valueFrom:
+            configMapKeyRef:
+              name: patroni-config
+              key: scope
+        - name: PATRONI_NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              name: patroni-config
+              key: namespace
+        - name: PATRONI_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: patroni-config
+              key: name
+        - name: PATRONI_RESTAPI_LISTEN
+          value: "0.0.0.0:8008"
+        - name: PATRONI_RESTAPI_CONNECT_ADDRESS
+          valueFrom:
+            configMapKeyRef:
+              name: patroni-config
+              key: restapi_connect_address
+        ports:
+        - containerPort: 5432
+          name: postgres
+        - containerPort: 8008
+          name: patroni
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  ports:
+  - port: 5432
+    name: postgres
+  - port: 8008
+    name: patroni
+  selector:
+    app: postgres
+  clusterIP: None
+
